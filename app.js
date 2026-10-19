@@ -266,7 +266,7 @@ function attachLocalAudio() {
     const ready = side === 'source' || summary.approved === summary.total;
     const online = card.querySelector('[data-audio]');
     online.disabled = true; online.textContent = '云端 MP3 暂不可用'; online.className = 'secondary';
-    card.querySelector('label[for^="voice-"]').hidden = true;
+    card.querySelector('label[for^="voice-"]').style.display = 'none';
     card.querySelector('p.field-note').textContent = ready ? '首次使用需下载约 40 MB 语音模型；文字在当前浏览器合成。长书稿会分成多个 WAV 文件。' : '译文音频需先确认全稿。';
     const button = document.createElement('button');
     button.className = 'primary'; button.textContent = `在本机生成${language(lang)} WAV`; button.disabled = !ready;
@@ -285,9 +285,14 @@ function attachLocalAudio() {
         status.textContent = '正在加载浏览器语音组件…';
         const [{PiperPlus}, ort] = await Promise.all([import('piper-plus'), import('onnxruntime-web')]);
         status.textContent = '正在下载或读取语音模型…';
-        engine = await PiperPlus.initialize({model: 'tsukuyomi', ort, onProgress: ({stage, progress}) => {
+        engine = await PiperPlus.initialize({
+          model: 'tsukuyomi', ort,
+          wasmG2pUrl: 'https://cdn.jsdelivr.net/npm/piper-plus@0.8.1/dist/rust-wasm/piper_plus_wasm.js',
+          zhDictBaseUrl: 'https://cdn.jsdelivr.net/npm/piper-plus@0.8.1/assets/',
+          onProgress: ({stage, progress}) => {
           status.textContent = `${stage || '加载模型'} ${Number.isFinite(progress) ? Math.round(progress * 100) + '%' : ''}`;
-        }});
+          },
+        });
         const pieces = speechPieces(text), parts = [], safeTitle = b.title.replace(/[\\/:*?"<>|]/g, '_');
         if (!pieces.length) throw new Error('没有可朗读的文字');
         const rate = Number($('#rate-' + side).value.replace('%', '')) || 0;
@@ -486,3 +491,4 @@ async function boot() {
   else welcome();
 }
 boot().catch(error => { toast(error.message, true); $('#content').innerHTML = '<div class="loading">无法连接团队云端服务。请检查网络，稍后刷新页面。</div>'; });
+
