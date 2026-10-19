@@ -87,7 +87,7 @@ function running() { return state.book?.job?.state === 'running'; }
 function jobMarkup() {
   const job = state.book.job;
   if (!job?.state) return '';
-  if (job.kind === 'audio' && job.state === 'error') return '<div class="notice" role="status">云端 MP3 暂不可用；请在「双语音频」中生成并下载浏览器 WAV。</div>';
+  if (job.kind === 'audio' && job.state === 'error') return '<div class="notice" role="status">云端语音接口暂不可用；请在「双语音频」中生成并下载浏览器 MP3。</div>';
   return `<div class="job-panel ${job.state === 'error' ? 'error' : ''}" role="status"><div><div class="job-label">${esc(job.message)}</div><div class="job-detail">${({translate:'全文翻译',review:'AI 辅助复核',audio:'音频生成'})[job.kind] || '任务'}${job.total ? ` · ${job.done} / ${job.total}` : ''}</div>${job.state === 'running' ? `<progress aria-label="任务进度" max="${job.total || 1}" value="${job.done || 0}"></progress>` : ''}</div>${job.state === 'running' ? `<button class="secondary" id="cancel-job" ${job.cancel ? 'disabled' : ''}>${job.cancel ? '停止中…' : '停止任务'}</button>` : ''}</div>`;
 }
 
@@ -256,8 +256,30 @@ function wavBlob(chunks, sampleRate) {
   return new Blob([bytes], {type: 'audio/wav'});
 }
 
+async function mp3Blob(chunks, sampleRate) {
+  if (!window.lamejs?.Mp3Encoder) throw new Error('MP3 编码器未加载');
+  const encoder = new window.lamejs.Mp3Encoder(1, sampleRate, 64);
+  const frames = [];
+  let count = 0;
+  for (const chunk of chunks) {
+    const pcm = new Int16Array(chunk.length);
+    for (let i = 0; i < chunk.length; i++) {
+      const value = Math.max(-1, Math.min(1, chunk[i]));
+      pcm[i] = value < 0 ? value * 32768 : value * 32767;
+    }
+    for (let i = 0; i < pcm.length; i += 1152) {
+      const encoded = encoder.encodeBuffer(pcm.subarray(i, i + 1152));
+      if (encoded.length) frames.push(new Uint8Array(encoded));
+      if (++count % 64 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  }
+  const last = encoder.flush();
+  if (last.length) frames.push(new Uint8Array(last));
+  return new Blob(frames, {type: 'audio/mpeg'});
+}
+
 function localAudioMarkup(entry) {
-  return entry.parts.map((part, i) => `<div class="player"><audio controls preload="metadata" src="${part.url}"></audio><br><a class="download-link" href="${part.url}" download="${esc(part.name)}">↓ 下载第 ${i + 1} 部分 WAV</a></div>`).join('');
+  return entry.parts.map((part, i) => `<div class="player"><audio controls preload="metadata" src="${part.mp3Url || part.wavUrl}"></audio><br>${part.mp3Url ? `<a class="download-link" href="${part.mp3Url}" download="${esc(part.name)}.mp3">↓ 下载第 ${i + 1} 部分 MP3</a> · ` : ''}<a class="download-link" href="${part.wavUrl}" download="${esc(part.name)}.wav">下载 WAV</a></div>`).join('');
 }
 
 function attachLocalAudio() {
@@ -266,11 +288,11 @@ function attachLocalAudio() {
     const side = index === 0 ? 'source' : 'target', lang = side === 'source' ? b.source_lang : b.target_lang;
     const ready = side === 'source' || summary.approved === summary.total;
     const online = card.querySelector('[data-audio]');
-    online.disabled = true; online.textContent = '云端 MP3 暂不可用'; online.className = 'secondary';
+    online.disabled = true; online.style.display = 'none';
     card.querySelector('label[for^="voice-"]').style.display = 'none';
-    card.querySelector('p.field-note').textContent = ready ? '首次使用需下载约 40 MB 语音模型；文字在当前浏览器合成。长书稿会分成多个 WAV 文件。' : '译文音频需先确认全稿。';
+    card.querySelector('p.field-note').textContent = ready ? '首次使用需下载约 40 MB 语音模型；文字在当前浏览器合成。长书稿会分成多个 MP3 文件。' : '译文音频需先确认全稿。';
     const button = document.createElement('button');
-    button.className = 'primary'; button.textContent = `在本机生成${language(lang)} WAV`; button.disabled = !ready;
+    button.className = 'primary'; button.textContent = `在本机生成${language(lang)} MP3`; button.disabled = !ready;
     online.before(button);
     const status = document.createElement('p'); status.className = 'field-note'; status.setAttribute('role', 'status');
     online.after(status);
@@ -296,11 +318,15 @@ function attachLocalAudio() {
         const pieces = speechPieces(text), parts = [], safeTitle = b.title.replace(/[\\/:*?"<>|]/g, '_');
         if (!pieces.length) throw new Error('没有可朗读的文字');
         const rate = Number($('#rate-' + side).value.replace('%', '')) || 0;
-        let chunks = [], chars = 0, sampleRate = 0;
-        const flush = () => {
+        let chunks = [], chars = 0, sampleRate = 0, mp3Error = '';
+        const flush = async () => {
           if (!chunks.length) return;
-          const url = URL.createObjectURL(wavBlob(chunks, sampleRate));
-          parts.push({url, name: `${safeTitle}-${lang}-${String(parts.length + 1).padStart(2, '0')}.wav`});
+          status.textContent = `正在压缩第 ${parts.length + 1} 部分 MP3…`;
+          const wavUrl = URL.createObjectURL(wavBlob(chunks, sampleRate));
+          let mp3Url = null;
+          try { mp3Url = URL.createObjectURL(await mp3Blob(chunks, sampleRate)); }
+          catch (error) { mp3Error = error.message; }
+          parts.push({wavUrl, mp3Url, name: `${safeTitle}-${lang}-${String(parts.length + 1).padStart(2, '0')}`});
           chunks = []; chars = 0;
         };
         for (let i = 0; i < pieces.length; i++) {
@@ -308,15 +334,15 @@ function attachLocalAudio() {
           const audio = await engine.synthesize(pieces[i], {language: lang, lengthScale: 1.5 / (1 + rate / 100)});
           if (sampleRate && sampleRate !== audio.sampleRate) throw new Error('语音采样率发生变化，请重试');
           sampleRate = audio.sampleRate; chunks.push(audio.samples); chars += pieces[i].length;
-          if (chars >= 1200) flush();
+          if (chars >= 1200) await flush();
         }
-        flush();
+        await flush();
         const key = b.id + ':' + side, previous = localAudio.get(key);
-        previous?.parts.forEach(part => URL.revokeObjectURL(part.url));
+        previous?.parts.forEach(part => { URL.revokeObjectURL(part.wavUrl); if (part.mp3Url) URL.revokeObjectURL(part.mp3Url); });
         localAudio.set(key, {text, parts});
         area.innerHTML = localAudioMarkup({parts});
         card.querySelector('.player-empty')?.remove();
-        status.textContent = `已完成 ${parts.length} 个 WAV 文件。请逐个下载；刷新页面后需重新生成。`;
+        status.textContent = mp3Error ? `MP3 压缩失败（${mp3Error}），已保留 WAV 下载。` : `已完成 ${parts.length} 个 MP3 文件。请逐个下载；刷新页面后需重新生成。`;
       } catch (error) {
         status.textContent = `生成失败：${error.message}`;
         throw error;
@@ -324,7 +350,7 @@ function attachLocalAudio() {
     });
   });
   const footnote = $('#tab-content > .footnote');
-  if (footnote) footnote.innerHTML = '浏览器语音模型在当前设备运行；请抽听中文、英文的专有名词与数字。音色：<a href="https://tyc.rei-yumesaki.net/material/corpus/" target="_blank" rel="noopener noreferrer">つくよみちゃん（CV 夢前黎）</a>，语音引擎：<a href="https://github.com/ayutaz/piper-plus" target="_blank" rel="noopener noreferrer">piper-plus</a>。';
+  if (footnote) footnote.innerHTML = '浏览器语音模型和 MP3 压缩都在当前设备运行；请抽听中文、英文的专有名词与数字。音色：<a href="https://tyc.rei-yumesaki.net/material/corpus/" target="_blank" rel="noopener noreferrer">つくよみちゃん（CV 夢前黎）</a>；语音引擎：<a href="https://github.com/ayutaz/piper-plus" target="_blank" rel="noopener noreferrer">piper-plus</a>；MP3 编码：<a href="https://github.com/zhuker/lamejs" target="_blank" rel="noopener noreferrer">lamejs</a>。';
 }
 
 function renderExport() {
