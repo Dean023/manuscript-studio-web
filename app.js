@@ -69,7 +69,7 @@ async function openBook(id) {
 
 function welcome() {
   $('#breadcrumb').textContent = '开始一本新书';
-  $('#content').innerHTML = `<section class="welcome"><div class="welcome-grid"><div><span class="eyebrow">WORDS, ACROSS LANGUAGES</span><h1>让一本书，<br>拥有两种语言。</h1><p class="intro">从一份书稿，到一份准确的译文，<br>再到可以随时聆听的声音。<br>在这里，完成你的中英双语阅读作品。</p><div class="actions"><button class="primary" id="welcome-import">导入第一份书稿 <span>→</span></button><button class="quiet" id="welcome-demo">体验示例</button></div></div><div class="manuscript-preview" aria-label="中英对照书稿预览"><div class="preview-top"><span>THE READING LIFE</span><span>01 / 07</span></div><p class="preview-source">认真倾听，往往比<br>急于回答更重要。</p><p class="preview-target">Listening carefully is often more important than rushing to answer.</p><div class="preview-bottom"><span class="wave" aria-hidden="true">${'<i></i>'.repeat(19)}</span><span>中文原声 · English audio</span></div></div></div><div class="workflow"><div><span class="step-number">01</span><section><h3>导入与翻译</h3><p>上传 Word、TXT 或粘贴文字。<br>中文与英文，双向转换。</p></section></div><div><span class="step-number">02</span><section><h3>逐段对照校对</h3><p>统一术语，核对细节。<br>每一处修改都由你掌握。</p></section></div><div><span class="step-number">03</span><section><h3>把文字变成声音</h3><p>分别生成原文与译文音频，<br>带走文字稿和 MP3。</p></section></div></div><p class="welcome-note">书稿保存在团队云端。翻译需自备 DeepSeek API Key；示例译文已预先编写，音频生成需要联网。</p></section>`;
+  $('#content').innerHTML = `<section class="welcome"><div class="welcome-grid"><div><span class="eyebrow">WORDS, ACROSS LANGUAGES</span><h1>让一本书，<br>拥有两种语言。</h1><p class="intro">从一份书稿，到一份准确的译文，<br>再到可以随时聆听的声音。<br>在这里，完成你的中英双语阅读作品。</p><div class="actions"><button class="primary" id="welcome-import">导入第一份书稿 <span>→</span></button><button class="quiet" id="welcome-demo">体验示例</button></div></div><div class="manuscript-preview" aria-label="中英对照书稿预览"><div class="preview-top"><span>THE READING LIFE</span><span>01 / 07</span></div><p class="preview-source">认真倾听，往往比<br>急于回答更重要。</p><p class="preview-target">Listening carefully is often more important than rushing to answer.</p><div class="preview-bottom"><span class="wave" aria-hidden="true">${'<i></i>'.repeat(19)}</span><span>中文原声 · English audio</span></div></div></div><div class="workflow"><div><span class="step-number">01</span><section><h3>导入与翻译</h3><p>上传 Word、TXT 或粘贴文字。<br>中文与英文，双向转换。</p></section></div><div><span class="step-number">02</span><section><h3>逐段对照校对</h3><p>统一术语，核对细节。<br>每一处修改都由你掌握。</p></section></div><div><span class="step-number">03</span><section><h3>把文字变成声音</h3><p>分别生成原文与译文音频，<br>带走文字稿和音频文件。</p></section></div></div><p class="welcome-note">书稿保存在团队云端。翻译需自备 DeepSeek API Key；示例译文已预先编写，音频生成首次需下载语音模型。</p></section>`;
   $('#welcome-import').onclick = () => $('#import-dialog').showModal();
   $('#welcome-demo').onclick = () => perform(async () => {
     const book = await api('/api/demo', {source_lang: 'zh'});
@@ -266,12 +266,11 @@ function attachLocalAudio() {
     const ready = side === 'source' || summary.approved === summary.total;
     const online = card.querySelector('[data-audio]');
     online.disabled = true; online.textContent = '云端 MP3 暂不可用'; online.className = 'secondary';
+    card.querySelector('label[for^="voice-"]').hidden = true;
+    card.querySelector('p.field-note').textContent = ready ? '首次使用需下载约 40 MB 语音模型；文字在当前浏览器合成。长书稿会分成多个 WAV 文件。' : '译文音频需先确认全稿。';
     const button = document.createElement('button');
     button.className = 'primary'; button.textContent = `在本机生成${language(lang)} WAV`; button.disabled = !ready;
     online.before(button);
-    const note = document.createElement('p'); note.className = 'field-note';
-    note.textContent = ready ? '首次使用需下载约 40 MB 语音模型；文字在当前浏览器合成。长书稿会分成多个 WAV 文件。' : '译文音频需先确认全稿。';
-    online.before(note);
     const status = document.createElement('p'); status.className = 'field-note'; status.setAttribute('role', 'status');
     online.after(status);
     const area = document.createElement('div'); card.append(area);
