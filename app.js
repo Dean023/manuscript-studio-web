@@ -1,5 +1,7 @@
 'use strict';
 const API_BASE = 'https://vpqzpfworkqudeefnnsg.supabase.co/functions/v1/manuscript-studio';
+// Supabase's legacy anon JWT is intentionally public; private manuscript access is enforced by the team password.
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZwcXpwZndvcmtxdWRlZWZubnNnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIzODEzOTgsImV4cCI6MjEwNzk1NzM5OH0.ilksU5QsK775a0lKqQV8_rFm2FBLfCTWuLxrS1iDfuY';
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -28,6 +30,8 @@ async function api(path, body) {
 
 function apiFetch(path, options = {}) {
   const headers = new Headers(options.headers || {});
+  headers.set('Authorization', 'Bearer ' + SUPABASE_ANON_KEY);
+  headers.set('apikey', SUPABASE_ANON_KEY);
   const token = sessionStorage.getItem('book-session');
   if (token) headers.set('x-book-session', token);
   return fetch(API_BASE + path, {...options, headers});
