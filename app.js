@@ -7,6 +7,7 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const language = code => code === 'zh' ? '中文' : '英文';
 const state = {books: [], book: null, tab: 'editor', page: 0, filter: 'all', search: '', dirty: new Map(), settings: {}, timer: null, busy: false};
+const localAudio = new Map();
 let uploadedFile = null;
 let toastTimer;
 
@@ -216,6 +217,106 @@ function renderAudio() {
       button.remove();
     } catch (error) { button.disabled = false; button.textContent = '重试加载音频'; throw error; }
   }));
+  attachLocalAudio();
+}
+
+function speechPieces(text) {
+  const pieces = [];
+  for (const line of text.split(/\r?\n/)) {
+    let rest = line.trim();
+    while (rest) {
+      let end = Math.min(rest.length, 150);
+      if (end < rest.length) {
+        const marks = [...rest.slice(0, end).matchAll(/[。！？.!?；;，,]\s*/g)];
+        const last = marks.at(-1);
+        if (last && last.index > 65) end = last.index + last[0].length;
+      }
+      const piece = rest.slice(0, end).trim();
+      if (piece) pieces.push(piece);
+      rest = rest.slice(end).trim();
+    }
+  }
+  return pieces;
+}
+
+function wavBlob(chunks, sampleRate) {
+  const count = chunks.reduce((sum, part) => sum + part.length, 0);
+  const bytes = new ArrayBuffer(44 + count * 2), view = new DataView(bytes);
+  const tag = (position, value) => { for (let i = 0; i < value.length; i++) view.setUint8(position + i, value.charCodeAt(i)); };
+  tag(0, 'RIFF'); view.setUint32(4, 36 + count * 2, true); tag(8, 'WAVE'); tag(12, 'fmt ');
+  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true); view.setUint16(34, 16, true); tag(36, 'data'); view.setUint32(40, count * 2, true);
+  let offset = 44;
+  for (const part of chunks) for (const sample of part) {
+    const value = Math.max(-1, Math.min(1, sample));
+    view.setInt16(offset, value < 0 ? value * 32768 : value * 32767, true); offset += 2;
+  }
+  return new Blob([bytes], {type: 'audio/wav'});
+}
+
+function localAudioMarkup(entry) {
+  return entry.parts.map((part, i) => `<div class="player"><audio controls preload="metadata" src="${part.url}"></audio><br><a class="download-link" href="${part.url}" download="${esc(part.name)}">↓ 下载第 ${i + 1} 部分 WAV</a></div>`).join('');
+}
+
+function attachLocalAudio() {
+  const b = state.book, summary = stats();
+  $$('.audio-card').forEach((card, index) => {
+    const side = index === 0 ? 'source' : 'target', lang = side === 'source' ? b.source_lang : b.target_lang;
+    const ready = side === 'source' || summary.approved === summary.total;
+    const online = card.querySelector('[data-audio]');
+    online.disabled = true; online.textContent = '云端 MP3 暂不可用'; online.className = 'secondary';
+    const button = document.createElement('button');
+    button.className = 'primary'; button.textContent = `在本机生成${language(lang)} WAV`; button.disabled = !ready;
+    online.before(button);
+    const note = document.createElement('p'); note.className = 'field-note';
+    note.textContent = ready ? '首次使用需下载约 40 MB 语音模型；文字在当前浏览器合成。长书稿会分成多个 WAV 文件。' : '译文音频需先确认全稿。';
+    online.before(note);
+    const status = document.createElement('p'); status.className = 'field-note'; status.setAttribute('role', 'status');
+    online.after(status);
+    const area = document.createElement('div'); card.append(area);
+    const text = b.segments.map(segment => segment[side]).join('\n');
+    const cached = localAudio.get(b.id + ':' + side);
+    if (cached?.text === text) area.innerHTML = localAudioMarkup(cached);
+    button.onclick = () => perform(async () => {
+      if (!await saveDraft()) return;
+      button.disabled = true;
+      let engine;
+      try {
+        status.textContent = '正在加载浏览器语音组件…';
+        const [{PiperPlus}, ort] = await Promise.all([import('piper-plus'), import('onnxruntime-web')]);
+        status.textContent = '正在下载或读取语音模型…';
+        engine = await PiperPlus.initialize({model: 'tsukuyomi', ort, onProgress: ({stage, progress}) => {
+          status.textContent = `${stage || '加载模型'} ${Number.isFinite(progress) ? Math.round(progress * 100) + '%' : ''}`;
+        }});
+        const pieces = speechPieces(text), parts = [], safeTitle = b.title.replace(/[\\/:*?"<>|]/g, '_');
+        if (!pieces.length) throw new Error('没有可朗读的文字');
+        const rate = Number($('#rate-' + side).value.replace('%', '')) || 0;
+        let chunks = [], chars = 0, sampleRate = 0;
+        const flush = () => {
+          if (!chunks.length) return;
+          const url = URL.createObjectURL(wavBlob(chunks, sampleRate));
+          parts.push({url, name: `${safeTitle}-${lang}-${String(parts.length + 1).padStart(2, '0')}.wav`});
+          chunks = []; chars = 0;
+        };
+        for (let i = 0; i < pieces.length; i++) {
+          status.textContent = `正在合成 ${i + 1} / ${pieces.length} 段；已准备 ${parts.length} 个文件`;
+          const audio = await engine.synthesize(pieces[i], {language: lang, lengthScale: 1.5 / (1 + rate / 100)});
+          if (sampleRate && sampleRate !== audio.sampleRate) throw new Error('语音采样率发生变化，请重试');
+          sampleRate = audio.sampleRate; chunks.push(audio.samples); chars += pieces[i].length;
+          if (chars >= 1200) flush();
+        }
+        flush();
+        const key = b.id + ':' + side, previous = localAudio.get(key);
+        previous?.parts.forEach(part => URL.revokeObjectURL(part.url));
+        localAudio.set(key, {text, parts});
+        area.innerHTML = localAudioMarkup({parts});
+        status.textContent = `已完成 ${parts.length} 个 WAV 文件。请逐个下载；刷新页面后需重新生成。`;
+      } finally { engine?.dispose(); button.disabled = false; }
+    });
+  });
+  const footnote = $('#tab-content > .footnote');
+  if (footnote) footnote.textContent = '浏览器语音模型仅在当前设备运行；请抽听中文、英文的专有名词与数字。云端 MP3 服务目前连接失败。';
 }
 
 function renderExport() {
@@ -386,4 +487,3 @@ async function boot() {
   else welcome();
 }
 boot().catch(error => { toast(error.message, true); $('#content').innerHTML = '<div class="loading">无法连接团队云端服务。请检查网络，稍后刷新页面。</div>'; });
-
