@@ -287,8 +287,7 @@ function attachLocalAudio() {
         status.textContent = '正在下载或读取语音模型…';
         engine = await PiperPlus.initialize({
           model: 'tsukuyomi', ort,
-          wasmG2pUrl: 'https://cdn.jsdelivr.net/npm/piper-plus@0.8.1/dist/rust-wasm/piper_plus_wasm.js',
-          zhDictBaseUrl: 'https://cdn.jsdelivr.net/npm/piper-plus@0.8.1/assets/',
+          wasmG2pUrl: 'https://ayutaz.github.io/piper-plus/dist/rust-wasm/piper_plus_wasm.js',
           onProgress: ({stage, progress}) => {
           status.textContent = `${stage || '加载模型'} ${Number.isFinite(progress) ? Math.round(progress * 100) + '%' : ''}`;
           },
