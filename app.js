@@ -277,7 +277,7 @@ function attachLocalAudio() {
     const area = document.createElement('div'); card.append(area);
     const text = b.segments.map(segment => segment[side]).join('\n');
     const cached = localAudio.get(b.id + ':' + side);
-    if (cached?.text === text) area.innerHTML = localAudioMarkup(cached);
+    if (cached?.text === text) { area.innerHTML = localAudioMarkup(cached); card.querySelector('.player-empty')?.remove(); }
     button.onclick = () => perform(async () => {
       if (!await saveDraft()) return;
       button.disabled = true;
@@ -315,7 +315,11 @@ function attachLocalAudio() {
         previous?.parts.forEach(part => URL.revokeObjectURL(part.url));
         localAudio.set(key, {text, parts});
         area.innerHTML = localAudioMarkup({parts});
+        card.querySelector('.player-empty')?.remove();
         status.textContent = `已完成 ${parts.length} 个 WAV 文件。请逐个下载；刷新页面后需重新生成。`;
+      } catch (error) {
+        status.textContent = `生成失败：${error.message}`;
+        throw error;
       } finally { engine?.dispose(); button.disabled = false; }
     });
   });
