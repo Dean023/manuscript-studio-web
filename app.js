@@ -87,6 +87,7 @@ function running() { return state.book?.job?.state === 'running'; }
 function jobMarkup() {
   const job = state.book.job;
   if (!job?.state) return '';
+  if (job.kind === 'audio' && job.state === 'error') return '<div class="notice" role="status">云端 MP3 暂不可用；请在「双语音频」中生成并下载浏览器 WAV。</div>';
   return `<div class="job-panel ${job.state === 'error' ? 'error' : ''}" role="status"><div><div class="job-label">${esc(job.message)}</div><div class="job-detail">${({translate:'全文翻译',review:'AI 辅助复核',audio:'音频生成'})[job.kind] || '任务'}${job.total ? ` · ${job.done} / ${job.total}` : ''}</div>${job.state === 'running' ? `<progress aria-label="任务进度" max="${job.total || 1}" value="${job.done || 0}"></progress>` : ''}</div>${job.state === 'running' ? `<button class="secondary" id="cancel-job" ${job.cancel ? 'disabled' : ''}>${job.cancel ? '停止中…' : '停止任务'}</button>` : ''}</div>`;
 }
 
@@ -319,7 +320,7 @@ function attachLocalAudio() {
     });
   });
   const footnote = $('#tab-content > .footnote');
-  if (footnote) footnote.textContent = '浏览器语音模型仅在当前设备运行；请抽听中文、英文的专有名词与数字。云端 MP3 服务目前连接失败。';
+  if (footnote) footnote.innerHTML = '浏览器语音模型在当前设备运行；请抽听中文、英文的专有名词与数字。音色：<a href="https://tyc.rei-yumesaki.net/material/corpus/" target="_blank" rel="noopener noreferrer">つくよみちゃん（CV 夢前黎）</a>，语音引擎：<a href="https://github.com/ayutaz/piper-plus" target="_blank" rel="noopener noreferrer">piper-plus</a>。';
 }
 
 function renderExport() {
