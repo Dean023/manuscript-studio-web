@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>译读 · 双语书稿工作室</title>
   <link rel="stylesheet" href="./style.css">
+  <script type="importmap">{"imports":{"piper-plus":"https://cdn.jsdelivr.net/npm/piper-plus@0.8.1/src/index.js","@piper-plus/g2p":"https://cdn.jsdelivr.net/npm/@piper-plus/g2p@0.4.2/src/index.js","onnxruntime-web":"https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.min.mjs"}}</script>
   <script src="./app.js" defer></script>
 </head>
 <body>
@@ -44,7 +45,7 @@
       <label>模型名称<input name="model" value="deepseek-v4-pro" required readonly></label>
       <label>API Key<input name="api_key" type="password" autocomplete="off" placeholder="只保存在当前浏览器会话中"></label>
       <label class="checkbox-row"><input name="clear_key" type="checkbox"> 清除已经保存的 Key</label>
-      <div class="info-box">翻译时，书稿段落与 Key 会发送至 DeepSeek。Key 仅保存在当前浏览器会话，不会写入云端书稿。音频使用 Edge 在线语音服务，会发送所选语言的文字。</div>
+      <div class="info-box">翻译时，书稿段落与 Key 会发送至 DeepSeek。Key 仅保存在当前浏览器会话，不会写入云端书稿。浏览器本机语音会下载模型，在你的设备上合成，不将文字发送给语音模型提供方。</div>
       <div class="dialog-footer"><button type="button" class="secondary close-dialog">取消</button><button class="primary">保存设置</button></div>
     </form>
   </dialog>
@@ -72,4 +73,3 @@
   <div id="toast" role="status" aria-live="polite"></div>
 </body>
 </html>
-
