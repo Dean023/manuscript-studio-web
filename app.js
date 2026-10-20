@@ -211,7 +211,20 @@ function schedulePoll() {
       render();
       if (!running()) { await refreshShelf(); toast(book.job.message, book.job.state === 'error'); }
       schedulePoll();
-    } catch (error) { toast(error.message, true); state.timer = setTimeout(schedulePoll, 4000); }
+    } catch (error) {
+      try {
+        const latest = await api('/api/books/' + id);
+        if (state.book?.id !== id) return;
+        state.book = latest;
+        render();
+        if (running()) { schedulePoll(); return; }
+        await refreshShelf();
+        toast(latest.job?.message || error.message, latest.job?.state === 'error');
+      } catch {
+        toast('连接暂时中断，正在自动重试…', true);
+        state.timer = setTimeout(schedulePoll, 4000);
+      }
+    }
   }, 1800);
 }
 
