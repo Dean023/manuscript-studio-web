@@ -1,17 +1,18 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>语音测试</title></head>
 <body><h1>中英文音色测试</h1><p id="status">准备就绪</p>
+<label>推理模式 <select id="mode"><option value="wasm-q8">兼容模式 WASM / q8</option><option value="webgpu-fp32">WebGPU / fp32</option><option value="webgpu-fp16">WebGPU / fp16</option></select></label>
 <label>音色 <select id="voice"><option value="zf_001">普通话女声 1</option><option value="zm_009">普通话男声 1</option><option value="af_maple">美式英语 Maple</option><option value="af_sol">美式英语 Sol</option></select></label>
 <button id="run">试听短句</button><audio id="player" controls></audio>
 <script type="module">
-const status=document.querySelector('#status'), voice=document.querySelector('#voice'), player=document.querySelector('#player');
+const status=document.querySelector('#status'), voice=document.querySelector('#voice'), mode=document.querySelector('#mode'), player=document.querySelector('#player');
 let tts;
 document.querySelector('#run').onclick=async()=>{
   try{
     status.textContent='正在加载语音程序…';
     const {KokoroTTS}=await import('https://cdn.jsdelivr.net/npm/@uzen/kokoro-js@1.2.4/dist/kokoro.web.js');
     if(!tts){
-      const device=navigator.gpu?'webgpu':'wasm', dtype=device==='webgpu'?'fp16':'q8';
+      const [device,dtype]=mode.value.split('-');
       status.textContent=`正在下载模型（${device}/${dtype}）…`;
       tts=await KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.1-zh-ONNX',{
         device,dtype,
@@ -22,8 +23,11 @@ document.querySelector('#run').onclick=async()=>{
     status.textContent='正在合成语音…';
     const text=voice.value[0]==='z'?'你好，今天我们开始阅读这本书。':'Hello. Today we are reading this book.';
     const audio=await tts.generate(text,{voice:voice.value,speed:1});
+    const finite=audio.data.filter(Number.isFinite).length;
+    const peak=audio.data.reduce((n,x)=>Math.max(n,Number.isFinite(x)?Math.abs(x):0),0);
+    const rms=Math.sqrt(audio.data.reduce((n,x)=>n+(Number.isFinite(x)?x*x:0),0)/audio.data.length);
     player.src=URL.createObjectURL(audio.toBlob());
-    status.textContent=`完成：${voice.value}，${audio.sampling_rate} Hz，${audio.data.length} 个采样点`;
+    status.textContent=`完成：${mode.value} / ${voice.value}，${audio.sampling_rate} Hz，${audio.data.length} 个采样点，有限值 ${finite}/${audio.data.length}，峰值 ${peak.toFixed(4)}，RMS ${rms.toFixed(4)}`;
   }catch(error){status.textContent='失败：'+(error?.stack||error);}
 };
 </script></body></html>
