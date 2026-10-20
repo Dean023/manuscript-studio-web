@@ -11,7 +11,7 @@ const providerModels = {deepseek:['deepseek-v4-pro'],openai:['gpt-5.6-terra','gp
 const providerKeyName = provider => `${provider}-api-key`;
 const state = {books: [], book: null, tab: 'editor', page: 0, filter: 'all', search: '', dirty: new Map(), settings: {}, timer: null, busy: false};
 const localAudio = new Map();
-const browserVoices = {zh:['zf_001','zf_002','zm_009','zm_010'],en:['af_maple','af_sol','bf_vale']};
+const browserVoices = {zh:['zf_001','zf_002','zm_009','zm_010'],en:['en-US-JennyNeural','af_maple','af_sol','bf_vale']};
 let browserTtsPromise;
 async function browserTts(status) {
   if (!browserTtsPromise) browserTtsPromise = (async () => {
@@ -263,6 +263,19 @@ function speechPieces(text) {
   return pieces;
 }
 
+function groupSpeechPieces(pieces, maxChars = 1200) {
+  const grouped = [];
+  let current = '';
+  for (const piece of pieces) {
+    if (current && current.length + piece.length + 1 > maxChars) {
+      grouped.push(current); current = '';
+    }
+    current += (current ? ' ' : '') + piece;
+  }
+  if (current) grouped.push(current);
+  return grouped;
+}
+
 function wavBlob(chunks, sampleRate) {
   const count = chunks.reduce((sum, part) => sum + part.length, 0);
   const bytes = new ArrayBuffer(44 + count * 2), view = new DataView(bytes);
@@ -317,7 +330,7 @@ async function mp3Blob(chunks, sampleRate) {
 }
 
 function localAudioMarkup(entry) {
-  return entry.parts.map((part, i) => `<div class="player"><audio controls preload="metadata" src="${part.mp3Url || part.wavUrl}"></audio><br>${part.mp3Url ? `<a class="download-link" href="${part.mp3Url}" download="${esc(part.name)}.mp3">↓ 下载第 ${i + 1} 部分 MP3</a> · ` : ''}<a class="download-link" href="${part.wavUrl}" download="${esc(part.name)}.wav">下载 WAV</a></div>`).join('');
+  return entry.parts.map((part, i) => `<div class="player"><audio controls preload="metadata" src="${part.mp3Url || part.wavUrl}"></audio><br>${part.mp3Url ? `<a class="download-link" href="${part.mp3Url}" download="${esc(part.name)}.mp3">↓ 下载第 ${i + 1} 部分 MP3</a>` : ''}${part.mp3Url && part.wavUrl ? ' · ' : ''}${part.wavUrl ? `<a class="download-link" href="${part.wavUrl}" download="${esc(part.name)}.wav">下载 WAV</a>` : ''}</div>`).join('');
 }
 
 function attachLocalAudio() {
@@ -327,7 +340,7 @@ function attachLocalAudio() {
     const ready = side === 'source' || summary.approved === summary.total;
     const online = card.querySelector('[data-audio]');
     online.disabled = true; online.style.display = 'none';
-    card.querySelector('p.field-note').textContent = ready ? '首次使用需下载约 340 MB 中英双语模型；文字在当前浏览器合成。长书稿会分成多个 MP3 文件。' : '译文音频需先确认全稿。';
+    const note = card.querySelector('p.field-note');
     const button = document.createElement('button');
     button.className = 'primary'; button.textContent = `在本机生成${language(lang)} MP3`; button.disabled = !ready;
     online.before(button);
@@ -343,16 +356,39 @@ function attachLocalAudio() {
         card.querySelector('.player-empty')?.remove();
       } else area.innerHTML = '';
     };
-    voiceSelect.onchange = showCached; rateSelect.onchange = showCached; showCached();
+    const updateVoiceUI = () => {
+      const jenny = voiceSelect.value === 'en-US-JennyNeural';
+      button.textContent = jenny ? '使用 Jenny 生成英文 MP3' : `在本机生成${language(lang)} MP3`;
+      note.textContent = !ready ? '译文音频需先确认全稿。' : jenny ? 'Jenny 与本地版使用同一微软音色；所选书稿文字会发送给微软生成 MP3。长书稿会分为多个文件。' : '首次使用需下载约 340 MB 中英双语模型；文字在当前浏览器合成。长书稿会分成多个 MP3 文件。';
+      showCached();
+    };
+    voiceSelect.onchange = updateVoiceUI; rateSelect.onchange = showCached; updateVoiceUI();
     button.onclick = () => perform(async () => {
       if (!await saveDraft()) return;
       button.disabled = true;
       try {
-        const engine = await browserTts(status);
         const voice = voiceSelect.value, rateValue = rateSelect.value;
         if (!browserVoices[lang].includes(voice)) throw new Error('音色与语言不匹配');
         const pieces = speechPieces(text), parts = [], safeTitle = b.title.replace(/[\\/:*?"<>|]/g, '_');
         if (!pieces.length) throw new Error('没有可朗读的文字');
+        if (voice === 'en-US-JennyNeural') {
+          const {synthesizeEdge, validateEdgeMp3} = await import('./edge-speech.js');
+          const groups = groupSpeechPieces(pieces);
+          for (let i = 0; i < groups.length; i++) {
+            status.textContent = `Jenny 正在生成第 ${i + 1} / ${groups.length} 部分…`;
+            const mp3 = await synthesizeEdge(groups[i], voice, rateValue);
+            await validateEdgeMp3(mp3);
+            parts.push({mp3Url:URL.createObjectURL(mp3), name:`${safeTitle}-${lang}-${String(i + 1).padStart(2, '0')}`});
+          }
+          const key = b.id + ':' + side, previous = localAudio.get(key);
+          previous?.parts.forEach(part => { if (part.wavUrl) URL.revokeObjectURL(part.wavUrl); if (part.mp3Url) URL.revokeObjectURL(part.mp3Url); });
+          localAudio.set(key, {text, voice, rate:rateValue, parts});
+          area.innerHTML = `<p class="field-note">已生成：${esc(voiceNames[voice])} · ${esc(rateValue)}</p>` + localAudioMarkup({parts});
+          card.querySelector('.player-empty')?.remove();
+          status.textContent = `Jenny 音频已完成，共 ${parts.length} 个 MP3 文件。请试听并逐个下载；刷新页面后需重新生成。`;
+          return;
+        }
+        const engine = await browserTts(status);
         const rate = Number(rateValue.replace('%', '')) || 0;
         let chunks = [], chars = 0, sampleRate = 0, mp3Error = '';
         const flush = async () => {
@@ -375,7 +411,7 @@ function attachLocalAudio() {
         }
         await flush();
         const key = b.id + ':' + side, previous = localAudio.get(key);
-        previous?.parts.forEach(part => { URL.revokeObjectURL(part.wavUrl); if (part.mp3Url) URL.revokeObjectURL(part.mp3Url); });
+        previous?.parts.forEach(part => { if (part.wavUrl) URL.revokeObjectURL(part.wavUrl); if (part.mp3Url) URL.revokeObjectURL(part.mp3Url); });
         localAudio.set(key, {text, voice, rate:rateValue, parts});
         area.innerHTML = `<p class="field-note">已生成：${esc(voiceNames[voice])} · ${esc(rateValue)}</p>` + localAudioMarkup({parts});
         card.querySelector('.player-empty')?.remove();
@@ -387,7 +423,7 @@ function attachLocalAudio() {
     });
   });
   const footnote = $('#tab-content > .footnote');
-  if (footnote) footnote.innerHTML = '浏览器语音模型和 MP3 压缩都在当前设备运行；请抽听中文、英文的专有名词与数字。语音引擎：<a href="https://github.com/uzen-zone/kokoro-js" target="_blank" rel="noopener noreferrer">Kokoro JS</a>；MP3 编码：<a href="https://github.com/zhuker/lamejs" target="_blank" rel="noopener noreferrer">lamejs</a>。';
+  if (footnote) footnote.innerHTML = 'Jenny 使用微软在线语音服务；其他音色和 MP3 压缩在当前设备运行。请抽听专有名词与数字。浏览器语音引擎：<a href="https://github.com/uzen-zone/kokoro-js" target="_blank" rel="noopener noreferrer">Kokoro JS</a>；MP3 编码：<a href="https://github.com/zhuker/lamejs" target="_blank" rel="noopener noreferrer">lamejs</a>。';
 }
 
 function renderExport() {
