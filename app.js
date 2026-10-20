@@ -6,8 +6,30 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const language = code => code === 'zh' ? '中文' : '英文';
+const providerUrls = {deepseek:'https://api.deepseek.com',openai:'https://api.openai.com/v1'};
+const providerModels = {deepseek:['deepseek-v4-pro'],openai:['gpt-5.6-terra','gpt-5.6-luna']};
+const providerKeyName = provider => `${provider}-api-key`;
 const state = {books: [], book: null, tab: 'editor', page: 0, filter: 'all', search: '', dirty: new Map(), settings: {}, timer: null, busy: false};
 const localAudio = new Map();
+const browserVoices = {zh:['zf_001','zf_002','zm_009','zm_010'],en:['af_maple','af_sol','bf_vale']};
+let browserTtsPromise;
+async function browserTts(status) {
+  if (!browserTtsPromise) browserTtsPromise = (async () => {
+    status.textContent = '正在加载中英双语语音组件…';
+    const {KokoroTTS} = await import('https://cdn.jsdelivr.net/npm/@uzen/kokoro-js@1.2.4/dist/kokoro.web.js');
+    const model = 'onnx-community/Kokoro-82M-v1.1-zh-ONNX';
+    const voicePath = 'https://huggingface.co/onnx-community/Kokoro-82M-v1.1-zh-ONNX/resolve/main/voices';
+    const load = (device,dtype) => KokoroTTS.from_pretrained(model,{device,dtype,voicePath,progress_callback:x=>{
+      if(x.status === 'progress' && x.total) status.textContent = `正在下载语音模型 ${Math.round(x.loaded/x.total*100)}%`;
+    }});
+    if(navigator.gpu) {
+      try { return await load('webgpu','fp16'); }
+      catch { status.textContent = '正在切换兼容模式加载语音模型…'; }
+    }
+    return load('wasm','q8');
+  })().catch(error => { browserTtsPromise = null; throw error; });
+  return browserTtsPromise;
+}
 let uploadedFile = null;
 let toastTimer;
 
@@ -69,7 +91,7 @@ async function openBook(id) {
 
 function welcome() {
   $('#breadcrumb').textContent = '开始一本新书';
-  $('#content').innerHTML = `<section class="welcome"><div class="welcome-grid"><div><span class="eyebrow">WORDS, ACROSS LANGUAGES</span><h1>让一本书，<br>拥有两种语言。</h1><p class="intro">从一份书稿，到一份准确的译文，<br>再到可以随时聆听的声音。<br>在这里，完成你的中英双语阅读作品。</p><div class="actions"><button class="primary" id="welcome-import">导入第一份书稿 <span>→</span></button><button class="quiet" id="welcome-demo">体验示例</button></div></div><div class="manuscript-preview" aria-label="中英对照书稿预览"><div class="preview-top"><span>THE READING LIFE</span><span>01 / 07</span></div><p class="preview-source">认真倾听，往往比<br>急于回答更重要。</p><p class="preview-target">Listening carefully is often more important than rushing to answer.</p><div class="preview-bottom"><span class="wave" aria-hidden="true">${'<i></i>'.repeat(19)}</span><span>中文原声 · English audio</span></div></div></div><div class="workflow"><div><span class="step-number">01</span><section><h3>导入与翻译</h3><p>上传 Word、TXT 或粘贴文字。<br>中文与英文，双向转换。</p></section></div><div><span class="step-number">02</span><section><h3>逐段对照校对</h3><p>统一术语，核对细节。<br>每一处修改都由你掌握。</p></section></div><div><span class="step-number">03</span><section><h3>把文字变成声音</h3><p>分别生成原文与译文音频，<br>带走文字稿和音频文件。</p></section></div></div><p class="welcome-note">书稿保存在团队云端。翻译需自备 DeepSeek API Key；示例译文已预先编写，音频生成首次需下载语音模型。</p></section>`;
+  $('#content').innerHTML = `<section class="welcome"><div class="welcome-grid"><div><span class="eyebrow">WORDS, ACROSS LANGUAGES</span><h1>让一本书，<br>拥有两种语言。</h1><p class="intro">从一份书稿，到一份准确的译文，<br>再到可以随时聆听的声音。<br>在这里，完成你的中英双语阅读作品。</p><div class="actions"><button class="primary" id="welcome-import">导入第一份书稿 <span>→</span></button><button class="quiet" id="welcome-demo">体验示例</button></div></div><div class="manuscript-preview" aria-label="中英对照书稿预览"><div class="preview-top"><span>THE READING LIFE</span><span>01 / 07</span></div><p class="preview-source">认真倾听，往往比<br>急于回答更重要。</p><p class="preview-target">Listening carefully is often more important than rushing to answer.</p><div class="preview-bottom"><span class="wave" aria-hidden="true">${'<i></i>'.repeat(19)}</span><span>中文原声 · English audio</span></div></div></div><div class="workflow"><div><span class="step-number">01</span><section><h3>导入与翻译</h3><p>上传 Word、TXT 或粘贴文字。<br>中文与英文，双向转换。</p></section></div><div><span class="step-number">02</span><section><h3>逐段对照校对</h3><p>统一术语，核对细节。<br>每一处修改都由你掌握。</p></section></div><div><span class="step-number">03</span><section><h3>把文字变成声音</h3><p>分别生成原文与译文音频，<br>带走文字稿和音频文件。</p></section></div></div><p class="welcome-note">书稿保存在团队云端。翻译需自备 DeepSeek 或 OpenAI API Key；示例译文已预先编写，音频生成首次需下载语音模型。</p></section>`;
   $('#welcome-import').onclick = () => $('#import-dialog').showModal();
   $('#welcome-demo').onclick = () => perform(async () => {
     const book = await api('/api/demo', {source_lang: 'zh'});
@@ -169,8 +191,8 @@ async function saveDraft() {
 function launchJob(kind, options = {}) {
   perform(async () => {
     if (!await saveDraft()) return;
-    if ((kind === 'translate' || kind === 'review') && !state.settings.has_key) { toast('请先在「服务设置」填写 DeepSeek API Key', true); return; }
-    state.book = await api(`/api/books/${state.book.id}/job`, {kind, revision: state.book.revision, ...options});
+    if ((kind === 'translate' || kind === 'review') && !state.settings.has_key) { toast('请先在「服务设置」填写所选服务的 API Key', true); return; }
+    state.book = await api(`/api/books/${state.book.id}/job`, {kind, revision: state.book.revision, ...(kind === 'translate' || kind === 'review' ? {provider:state.settings.provider,model:state.settings.model} : {}), ...options});
     render(); schedulePoll();
   });
 }
@@ -181,7 +203,8 @@ function schedulePoll() {
   const id = state.book.id;
   state.timer = setTimeout(async () => {
     try {
-      const book = await api('/api/books/' + id + '/step', {api_key: sessionStorage.getItem('deepseek-api-key') || ''});
+      const provider = state.book.job.provider || 'deepseek';
+      const book = await api('/api/books/' + id + '/step', {api_key: sessionStorage.getItem(providerKeyName(provider)) || ''});
       if (state.book?.id !== id) return;
       state.book = book;
       // Keep the active page and filter; editing is locked during a background task.
@@ -192,7 +215,7 @@ function schedulePoll() {
   }, 1800);
 }
 
-const voiceNames = {'zh-CN-XiaoxiaoNeural':'晓晓 · 普通话女声','zh-CN-YunxiNeural':'云希 · 普通话男声','en-US-JennyNeural':'Jenny · 美式女声','en-US-GuyNeural':'Guy · 美式男声','en-GB-SoniaNeural':'Sonia · 英式女声','en-GB-RyanNeural':'Ryan · 英式男声'};
+const voiceNames = {'zf_001':'普通话女声 1','zf_002':'普通话女声 2','zm_009':'普通话男声 1','zm_010':'普通话男声 2','af_maple':'美式英语 · Maple','af_sol':'美式英语 · Sol','bf_vale':'英式英语 · Vale','zh-CN-XiaoxiaoNeural':'晓晓 · 普通话女声','zh-CN-YunxiNeural':'云希 · 普通话男声','en-US-JennyNeural':'Jenny · 美式女声','en-US-GuyNeural':'Guy · 美式男声','en-GB-SoniaNeural':'Sonia · 英式女声','en-GB-RyanNeural':'Ryan · 英式男声'};
 
 function renderAudio() {
   const b = state.book, s = stats();
@@ -200,7 +223,7 @@ function renderAudio() {
     const lang = side === 'source' ? b.source_lang : b.target_lang;
     const ready = side === 'source' || s.approved === s.total;
     const audio = b.audio[side];
-    return `<section class="audio-card"><div class="audio-title"><div><h3>${language(lang)}${side === 'source' ? '原文' : '译文'}</h3><small>${side === 'source' ? '直接从原始书稿生成' : `${s.approved} / ${s.total} 段译文已确认`}</small></div><span class="language">${lang === 'zh' ? '中' : 'En'}</span></div><label for="voice-${side}">朗读音色<select id="voice-${side}">${(state.settings.voices?.[lang] || []).map(v => `<option value="${v}">${voiceNames[v] || v}</option>`).join('')}</select></label><label for="rate-${side}">朗读速度<select id="rate-${side}"><option value="-20%">0.8 倍 · 舒缓</option><option value="-10%">0.9 倍 · 稍慢</option><option value="+0%" selected>1.0 倍 · 标准</option><option value="+10%">1.1 倍 · 稍快</option><option value="+20%">1.2 倍 · 较快</option></select></label><p class="field-note">${ready ? '生成需要联网。长书稿会分段处理，中断后重试会复用已完成的片段。' : '请先到「对照校对」完成翻译并确认全稿，确保音频采用正确的定稿。'}</p><button class="primary" data-audio="${side}" ${running() || !ready ? 'disabled' : ''}>${audio ? '重新生成' : '生成'}${language(lang)}音频</button>${audio ? `<div class="player"><button class="secondary" data-load-audio="${side}">加载试听与下载</button><div class="audio-loaded"></div><small>${esc(voiceNames[audio.voice] || audio.voice)} · ${esc(audio.rate)}</small></div>` : '<div class="player-empty">音频生成后，可以在这里<br>试听与下载。</div>'}</section>`;
+    return `<section class="audio-card"><div class="audio-title"><div><h3>${language(lang)}${side === 'source' ? '原文' : '译文'}</h3><small>${side === 'source' ? '直接从原始书稿生成' : `${s.approved} / ${s.total} 段译文已确认`}</small></div><span class="language">${lang === 'zh' ? '中' : 'En'}</span></div><label for="voice-${side}">朗读音色<select id="voice-${side}">${browserVoices[lang].map(v => `<option value="${v}">${voiceNames[v]}</option>`).join('')}</select></label><label for="rate-${side}">朗读速度<select id="rate-${side}"><option value="-20%">0.8 倍 · 舒缓</option><option value="-10%">0.9 倍 · 稍慢</option><option value="+0%" selected>1.0 倍 · 标准</option><option value="+10%">1.1 倍 · 稍快</option><option value="+20%">1.2 倍 · 较快</option></select></label><p class="field-note">${ready ? '生成需要联网。长书稿会分段处理。' : '请先到「对照校对」完成翻译并确认全稿，确保音频采用正确的定稿。'}</p><button class="primary" data-audio="${side}" ${running() || !ready ? 'disabled' : ''}>${audio ? '重新生成' : '生成'}${language(lang)}音频</button>${audio ? `<div class="player"><button class="secondary" data-load-audio="${side}">加载试听与下载</button><div class="audio-loaded"></div><small>${esc(voiceNames[audio.voice] || audio.voice)} · ${esc(audio.rate)}</small></div>` : '<div class="player-empty">音频生成后，可以在这里<br>试听与下载。</div>'}</section>`;
   }).join('')}</div><p class="footnote">音频由 AI 合成。请抽听专有名词、数字和段落衔接。Edge 语音服务需要网络可用，暂不支持离线生成。</p>`;
   $$('[data-audio]').forEach(button => button.onclick = () => {
     const side = button.dataset.audio;
@@ -289,8 +312,7 @@ function attachLocalAudio() {
     const ready = side === 'source' || summary.approved === summary.total;
     const online = card.querySelector('[data-audio]');
     online.disabled = true; online.style.display = 'none';
-    card.querySelector('label[for^="voice-"]').style.display = 'none';
-    card.querySelector('p.field-note').textContent = ready ? '首次使用需下载约 40 MB 语音模型；文字在当前浏览器合成。长书稿会分成多个 MP3 文件。' : '译文音频需先确认全稿。';
+    card.querySelector('p.field-note').textContent = ready ? '首次使用需下载约 130–170 MB 中英双语模型；文字在当前浏览器合成。长书稿会分成多个 MP3 文件。' : '译文音频需先确认全稿。';
     const button = document.createElement('button');
     button.className = 'primary'; button.textContent = `在本机生成${language(lang)} MP3`; button.disabled = !ready;
     online.before(button);
@@ -298,26 +320,25 @@ function attachLocalAudio() {
     online.after(status);
     const area = document.createElement('div'); card.append(area);
     const text = b.segments.map(segment => segment[side]).join('\n');
-    const cached = localAudio.get(b.id + ':' + side);
-    if (cached?.text === text) { area.innerHTML = localAudioMarkup(cached); card.querySelector('.player-empty')?.remove(); }
+    const voiceSelect = $('#voice-' + side), rateSelect = $('#rate-' + side);
+    const showCached = () => {
+      const cached = localAudio.get(b.id + ':' + side);
+      if (cached?.text === text && cached.voice === voiceSelect.value && cached.rate === rateSelect.value) {
+        area.innerHTML = `<p class="field-note">已生成：${esc(voiceNames[cached.voice])} · ${esc(cached.rate)}</p>` + localAudioMarkup(cached);
+        card.querySelector('.player-empty')?.remove();
+      } else area.innerHTML = '';
+    };
+    voiceSelect.onchange = showCached; rateSelect.onchange = showCached; showCached();
     button.onclick = () => perform(async () => {
       if (!await saveDraft()) return;
       button.disabled = true;
-      let engine;
       try {
-        status.textContent = '正在加载浏览器语音组件…';
-        const [{PiperPlus}, ort] = await Promise.all([import('piper-plus'), import('onnxruntime-web')]);
-        status.textContent = '正在下载或读取语音模型…';
-        engine = await PiperPlus.initialize({
-          model: 'tsukuyomi', ort,
-          wasmG2pUrl: 'https://ayutaz.github.io/piper-plus/dist/rust-wasm/piper_plus_wasm.js',
-          onProgress: ({stage, progress}) => {
-          status.textContent = `${stage || '加载模型'} ${Number.isFinite(progress) ? Math.round(progress * 100) + '%' : ''}`;
-          },
-        });
+        const engine = await browserTts(status);
+        const voice = voiceSelect.value, rateValue = rateSelect.value;
+        if (!browserVoices[lang].includes(voice)) throw new Error('音色与语言不匹配');
         const pieces = speechPieces(text), parts = [], safeTitle = b.title.replace(/[\\/:*?"<>|]/g, '_');
         if (!pieces.length) throw new Error('没有可朗读的文字');
-        const rate = Number($('#rate-' + side).value.replace('%', '')) || 0;
+        const rate = Number(rateValue.replace('%', '')) || 0;
         let chunks = [], chars = 0, sampleRate = 0, mp3Error = '';
         const flush = async () => {
           if (!chunks.length) return;
@@ -331,26 +352,26 @@ function attachLocalAudio() {
         };
         for (let i = 0; i < pieces.length; i++) {
           status.textContent = `正在合成 ${i + 1} / ${pieces.length} 段；已准备 ${parts.length} 个文件`;
-          const audio = await engine.synthesize(pieces[i], {language: lang, lengthScale: 1.5 / (1 + rate / 100)});
-          if (sampleRate && sampleRate !== audio.sampleRate) throw new Error('语音采样率发生变化，请重试');
-          sampleRate = audio.sampleRate; chunks.push(audio.samples); chars += pieces[i].length;
+          const audio = await engine.generate(pieces[i], {voice, speed: 1 + rate / 100});
+          if (sampleRate && sampleRate !== audio.sampling_rate) throw new Error('语音采样率发生变化，请重试');
+          sampleRate = audio.sampling_rate; chunks.push(audio.data); chars += pieces[i].length;
           if (chars >= 1200) await flush();
         }
         await flush();
         const key = b.id + ':' + side, previous = localAudio.get(key);
         previous?.parts.forEach(part => { URL.revokeObjectURL(part.wavUrl); if (part.mp3Url) URL.revokeObjectURL(part.mp3Url); });
-        localAudio.set(key, {text, parts});
-        area.innerHTML = localAudioMarkup({parts});
+        localAudio.set(key, {text, voice, rate:rateValue, parts});
+        area.innerHTML = `<p class="field-note">已生成：${esc(voiceNames[voice])} · ${esc(rateValue)}</p>` + localAudioMarkup({parts});
         card.querySelector('.player-empty')?.remove();
         status.textContent = mp3Error ? `MP3 压缩失败（${mp3Error}），已保留 WAV 下载。` : `已完成 ${parts.length} 个 MP3 文件。请逐个下载；刷新页面后需重新生成。`;
       } catch (error) {
         status.textContent = `生成失败：${error.message}`;
         throw error;
-      } finally { engine?.dispose(); button.disabled = false; }
+      } finally { button.disabled = false; }
     });
   });
   const footnote = $('#tab-content > .footnote');
-  if (footnote) footnote.innerHTML = '浏览器语音模型和 MP3 压缩都在当前设备运行；请抽听中文、英文的专有名词与数字。音色：<a href="https://tyc.rei-yumesaki.net/material/corpus/" target="_blank" rel="noopener noreferrer">つくよみちゃん（CV 夢前黎）</a>；语音引擎：<a href="https://github.com/ayutaz/piper-plus" target="_blank" rel="noopener noreferrer">piper-plus</a>；MP3 编码：<a href="https://github.com/zhuker/lamejs" target="_blank" rel="noopener noreferrer">lamejs</a>。';
+  if (footnote) footnote.innerHTML = '浏览器语音模型和 MP3 压缩都在当前设备运行；请抽听中文、英文的专有名词与数字。语音引擎：<a href="https://github.com/uzen-zone/kokoro-js" target="_blank" rel="noopener noreferrer">Kokoro JS</a>；MP3 编码：<a href="https://github.com/zhuker/lamejs" target="_blank" rel="noopener noreferrer">lamejs</a>。';
 }
 
 function renderExport() {
@@ -367,28 +388,42 @@ function renderExport() {
 
 $('#new-book').onclick = () => $('#import-dialog').showModal();
 $$('.close-dialog').forEach(button => button.onclick = () => button.closest('dialog').close());
+function refreshProviderForm() {
+  const f = $('#settings-form'), provider = f.elements.provider.value;
+  const models = providerModels[provider];
+  f.elements.base_url.value = providerUrls[provider];
+  f.elements.model.innerHTML = models.map(model => `<option value="${model}">${model}${model === 'gpt-5.6-luna' ? ' · 低成本' : ''}</option>`).join('');
+  f.elements.model.value = provider === state.settings.provider && models.includes(state.settings.model) ? state.settings.model : models[0];
+  const hasKey = Boolean(sessionStorage.getItem(providerKeyName(provider))) || (provider === 'deepseek' && state.settings.server_has_key);
+  f.elements.api_key.value = '';
+  f.elements.api_key.placeholder = hasKey ? '已设置；留空则保留现有 Key' : '只保存在当前浏览器会话中';
+  f.elements.clear_key.checked = false;
+}
+$('#settings-form').elements.provider.onchange = refreshProviderForm;
 $('#settings-button').onclick = () => {
   const f = $('#settings-form');
-  f.elements.base_url.value = state.settings.base_url || 'https://api.deepseek.com';
-  f.elements.model.value = state.settings.model || '';
-  f.elements.api_key.value = '';
-  f.elements.api_key.placeholder = state.settings.has_key ? '已设置；留空则保留现有 Key' : '只保存在当前浏览器会话中';
-  f.elements.clear_key.checked = false;
+  f.elements.provider.value = state.settings.provider || 'deepseek';
+  refreshProviderForm();
   $('#settings-dialog').showModal();
 };
 $('#settings-form').onsubmit = e => {
   e.preventDefault(); perform(async () => {
     const f = e.target;
-    if (f.elements.base_url.value.replace(/\/$/,'') !== 'https://api.deepseek.com') throw new Error('云端版本目前只支持 DeepSeek 官方 API 地址');
-    if (f.elements.model.value.trim() !== 'deepseek-v4-pro') throw new Error('云端版本目前使用 deepseek-v4-pro 模型');
-    if (f.elements.clear_key.checked) sessionStorage.removeItem('deepseek-api-key');
-    if (f.elements.api_key.value.trim()) sessionStorage.setItem('deepseek-api-key', f.elements.api_key.value.trim());
-    state.settings.has_key = Boolean(sessionStorage.getItem('deepseek-api-key'));
+    const provider = f.elements.provider.value, model = f.elements.model.value;
+    if (!providerModels[provider]?.includes(model)) throw new Error('请选择受支持的翻译服务与模型');
+    if (f.elements.clear_key.checked) sessionStorage.removeItem(providerKeyName(provider));
+    if (f.elements.api_key.value.trim()) sessionStorage.setItem(providerKeyName(provider), f.elements.api_key.value.trim());
+    state.settings.provider = provider;
+    state.settings.model = model;
+    state.settings.base_url = providerUrls[provider];
+    state.settings.has_key = Boolean(sessionStorage.getItem(providerKeyName(provider))) || (provider === 'deepseek' && state.settings.server_has_key);
+    sessionStorage.setItem('translation-provider', provider);
+    sessionStorage.setItem('translation-model', model);
     f.elements.api_key.value = '';
     $('#settings-dialog').close(); updateConnection(); toast('设置已保存；首次翻译时会验证连接');
   });
 };
-function updateConnection() { $('#connection-dot').classList.toggle('connected', Boolean(state.settings.model && (state.settings.has_key || state.settings.base_url?.includes('localhost') || state.settings.base_url?.includes('127.0.0.1')))); }
+function updateConnection() { $('#connection-dot').classList.toggle('connected', Boolean(state.settings.model && state.settings.has_key)); }
 
 $('#glossary-form').onsubmit = e => {
   e.preventDefault(); perform(async () => {
@@ -513,7 +548,15 @@ document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.ke
 async function boot() {
   const session = await api('/api/session');
   if (!session.authenticated) { welcome(); if (!$('#login-dialog').open) $('#login-dialog').showModal(); return; }
-  state.settings = await api('/api/settings'); state.settings.has_key ||= Boolean(sessionStorage.getItem('deepseek-api-key')); updateConnection();
+  state.settings = await api('/api/settings');
+  state.settings.server_has_key = Boolean(state.settings.has_key);
+  const savedProvider = sessionStorage.getItem('translation-provider');
+  state.settings.provider = providerModels[savedProvider] ? savedProvider : 'deepseek';
+  const savedModel = sessionStorage.getItem('translation-model');
+  state.settings.model = providerModels[state.settings.provider].includes(savedModel) ? savedModel : providerModels[state.settings.provider][0];
+  state.settings.base_url = providerUrls[state.settings.provider];
+  state.settings.has_key = Boolean(sessionStorage.getItem(providerKeyName(state.settings.provider))) || (state.settings.provider === 'deepseek' && state.settings.server_has_key);
+  updateConnection();
   await refreshShelf();
   const last = localStorage.getItem('last-book');
   if (state.books.some(b => b.id === last)) await openBook(last);
