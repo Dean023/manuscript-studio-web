@@ -23,10 +23,10 @@ async function browserTts(status) {
       if(x.status === 'progress' && x.total) status.textContent = `正在下载语音模型 ${Math.round(x.loaded/x.total*100)}%`;
     }});
     if(navigator.gpu) {
-      try { return await load('webgpu','fp16'); }
+      try { return await load('webgpu','fp32'); }
       catch { status.textContent = '正在切换兼容模式加载语音模型…'; }
     }
-    return load('wasm','q8');
+    return load('wasm','fp32');
   })().catch(error => { browserTtsPromise = null; throw error; });
   return browserTtsPromise;
 }
@@ -279,6 +279,21 @@ function wavBlob(chunks, sampleRate) {
   return new Blob([bytes], {type: 'audio/wav'});
 }
 
+function validateSpeechAudio(audio) {
+  if (!audio?.data?.length || !Number.isFinite(audio.sampling_rate) || audio.sampling_rate <= 0) {
+    throw new Error('语音模型没有返回有效音频，请重试。');
+  }
+  let peak = 0, energy = 0;
+  for (const sample of audio.data) {
+    if (!Number.isFinite(sample)) throw new Error('语音模型输出异常，已停止生成以免下载静音文件。');
+    peak = Math.max(peak, Math.abs(sample));
+    energy += sample * sample;
+  }
+  if (peak < 0.001 || Math.sqrt(energy / audio.data.length) < 0.0001) {
+    throw new Error('语音模型生成了静音，已停止生成。请改用本地版 MP3 或更换浏览器重试。');
+  }
+}
+
 async function mp3Blob(chunks, sampleRate) {
   if (!window.lamejs?.Mp3Encoder) throw new Error('MP3 编码器未加载');
   const encoder = new window.lamejs.Mp3Encoder(1, sampleRate, 64);
@@ -312,7 +327,7 @@ function attachLocalAudio() {
     const ready = side === 'source' || summary.approved === summary.total;
     const online = card.querySelector('[data-audio]');
     online.disabled = true; online.style.display = 'none';
-    card.querySelector('p.field-note').textContent = ready ? '首次使用需下载约 130–170 MB 中英双语模型；文字在当前浏览器合成。长书稿会分成多个 MP3 文件。' : '译文音频需先确认全稿。';
+    card.querySelector('p.field-note').textContent = ready ? '首次使用需下载约 340 MB 中英双语模型；文字在当前浏览器合成。长书稿会分成多个 MP3 文件。' : '译文音频需先确认全稿。';
     const button = document.createElement('button');
     button.className = 'primary'; button.textContent = `在本机生成${language(lang)} MP3`; button.disabled = !ready;
     online.before(button);
@@ -353,6 +368,7 @@ function attachLocalAudio() {
         for (let i = 0; i < pieces.length; i++) {
           status.textContent = `正在合成 ${i + 1} / ${pieces.length} 段；已准备 ${parts.length} 个文件`;
           const audio = await engine.generate(pieces[i], {voice, speed: 1 + rate / 100});
+          validateSpeechAudio(audio);
           if (sampleRate && sampleRate !== audio.sampling_rate) throw new Error('语音采样率发生变化，请重试');
           sampleRate = audio.sampling_rate; chunks.push(audio.data); chars += pieces[i].length;
           if (chars >= 1200) await flush();
@@ -564,4 +580,3 @@ async function boot() {
   else welcome();
 }
 boot().catch(error => { toast(error.message, true); $('#content').innerHTML = '<div class="loading">无法连接团队云端服务。请检查网络，稍后刷新页面。</div>'; });
-
